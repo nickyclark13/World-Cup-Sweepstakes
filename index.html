@@ -212,12 +212,34 @@
     flex-direction: column;
     gap: 14px;
   }
-  .matchup-time {
+  .matchup.is-live {
+    border-color: #FF4444;
+    box-shadow: 0 0 16px rgba(255,68,68,0.25);
+    background: rgba(11,31,58,0.7);
+  }
+  .matchup-status {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--cream-dim);
-    letter-spacing: 0.15em;
+    font-size: 10px;
+    letter-spacing: 0.2em;
     text-transform: uppercase;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .matchup-status.scheduled { color: var(--cream-dim); }
+  .matchup-status.final { color: var(--cream-dim); }
+  .matchup-status.live { color: #FF4444; }
+  .matchup-status .live-dot {
+    width: 8px; height: 8px;
+    background: #FF4444;
+    border-radius: 50%;
+    box-shadow: 0 0 6px #FF4444;
+    animation: livePulse 1.2s ease-in-out infinite;
+  }
+  @keyframes livePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.2); }
   }
   .matchup-teams {
     display: flex;
@@ -246,13 +268,42 @@
     text-transform: uppercase;
     font-weight: 700;
   }
+  .matchup-vs-block {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 80px;
+  }
   .matchup-vs {
     font-family: 'Playfair Display', serif;
     font-style: italic;
     font-weight: 700;
     font-size: 16px;
     color: var(--gold);
-    flex-shrink: 0;
+  }
+  .matchup-score {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Playfair Display', serif;
+    font-weight: 900;
+  }
+  .matchup-score .score-num {
+    font-size: 36px;
+    color: var(--cream);
+    line-height: 1;
+    min-width: 24px;
+    text-align: center;
+  }
+  .matchup-score .score-num.live-num {
+    color: #FF4444;
+    text-shadow: 0 0 12px rgba(255,68,68,0.5);
+  }
+  .matchup-score .score-dash {
+    font-size: 24px;
+    color: var(--cream-dim);
+    font-weight: 400;
   }
   .matchup-note {
     font-size: 11px;
@@ -530,13 +581,37 @@
   .standings-table td.dead-num { color: var(--dead); font-size: 16px; }
   .standings-table tr:hover { background: rgba(255,255,255,0.02); }
   .standings-table .rank-1 td.rank-cell { font-size: 24px; }
-  .standings-table .alive-bar {
-    display: inline-block;
-    height: 6px;
-    background: var(--alive);
-    border-radius: 3px;
-    margin-left: 8px;
-    vertical-align: middle;
+  .standings-table .progress-cell {
+    width: 38%;
+    min-width: 140px;
+  }
+  .standings-table .progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+  .standings-table .progress-track {
+    flex: 1;
+    height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .standings-table .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--alive) 0%, #5BC0BE 100%);
+    border-radius: 4px;
+    transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .standings-table .progress-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--cream-dim);
+    flex-shrink: 0;
+    min-width: 30px;
+    text-align: right;
   }
 
   /* Participant cards (full roster) */
@@ -828,21 +903,35 @@
   });
 
   // ===== TODAY'S MATCHUPS =====
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 🔴 LIVE SCORE / FINAL SCORE CONFIG — UPDATE THIS SECTION DURING THE TOURNAMENT
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // For each match, set:
+  //   status: "scheduled" | "live" | "final"
+  //   scoreA / scoreB: numbers (only used if "live" or "final")
+  //   minute: string for live e.g. "67'" or "HT" or "Full Time"
+  //
+  // To update: edit the values below, then re-commit/push to GitHub.
+  // The page will show the new values on next refresh — no other changes needed.
+  //
+  const liveScores = {
+    "Ivory Coast-Norway": { status: "live",      scoreA: 1, scoreB: 1, minute: "74'" },
+    "Mexico-Ecuador":     { status: "scheduled", scoreA: 0, scoreB: 0 },
+    "France-Sweden":      { status: "scheduled", scoreA: 0, scoreB: 0 }
+  };
+
   const todayMatches = [
     {
-      time: "12:00 ET",
       location: "AT&T Stadium · Arlington",
       teamA: "Ivory Coast", teamB: "Norway",
       note: "Group E runner-up vs Group I runner-up"
     },
     {
-      time: "3:00 PM ET",
       location: "Estadio Azteca · Mexico City",
       teamA: "Mexico", teamB: "Ecuador",
       note: "Group A winner vs Group E third-place"
     },
     {
-      time: "5:00 PM ET",
       location: "MetLife Stadium · East Rutherford",
       teamA: "France", teamB: "Sweden",
       note: "Group I winner vs Group F third-place"
@@ -855,17 +944,43 @@
     const ownerB = ownerOf(m.teamB);
     const cA = ownerA ? PCOLORS[ownerA] : 'var(--cream-dim)';
     const cB = ownerB ? PCOLORS[ownerB] : 'var(--cream-dim)';
+
+    const key = `${m.teamA}-${m.teamB}`;
+    const score = liveScores[key] || { status: "scheduled" };
+
+    let statusHTML = '';
+    let scoreHTML = '';
+    if (score.status === "live") {
+      statusHTML = `<div class="matchup-status live"><span class="live-dot"></span>LIVE${score.minute ? ' · ' + score.minute : ''}</div>`;
+      scoreHTML = `<div class="matchup-score">
+        <span class="score-num live-num">${score.scoreA}</span>
+        <span class="score-dash">–</span>
+        <span class="score-num live-num">${score.scoreB}</span>
+      </div>`;
+    } else if (score.status === "final") {
+      statusHTML = `<div class="matchup-status final">FULL TIME</div>`;
+      scoreHTML = `<div class="matchup-score">
+        <span class="score-num">${score.scoreA}</span>
+        <span class="score-dash">–</span>
+        <span class="score-num">${score.scoreB}</span>
+      </div>`;
+    } else {
+      statusHTML = `<div class="matchup-status scheduled">UPCOMING</div>`;
+    }
+
     const div = document.createElement('div');
-    div.className = 'matchup';
+    div.className = 'matchup' + (score.status === 'live' ? ' is-live' : '');
     div.innerHTML = `
-      <div class="matchup-time">${m.time}</div>
+      ${statusHTML}
       <div class="matchup-teams">
         <div class="matchup-team">
           <div class="flag-lg">${flags[m.teamA]}</div>
           <div class="tname">${m.teamA}</div>
           <div class="owner" style="color: ${cA}">${ownerA || '—'}</div>
         </div>
-        <div class="matchup-vs">vs</div>
+        <div class="matchup-vs-block">
+          ${scoreHTML || '<div class="matchup-vs">vs</div>'}
+        </div>
         <div class="matchup-team">
           <div class="flag-lg">${flags[m.teamB]}</div>
           <div class="tname">${m.teamB}</div>
@@ -1229,9 +1344,13 @@
       </td>
       <td class="num alive-num">${s.alive}</td>
       <td class="num dead-num">${s.dead}</td>
-      <td>
-        <span class="alive-bar" style="width: ${s.alive * 18}px"></span>
-        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--cream-dim); margin-left: 6px;">${s.alive}/8</span>
+      <td class="progress-cell">
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-fill" style="width: ${(s.alive / 8) * 100}%"></div>
+          </div>
+          <span class="progress-text">${s.alive}/8</span>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
