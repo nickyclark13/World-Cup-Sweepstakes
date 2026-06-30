@@ -563,6 +563,7 @@
   .standings-table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: auto;
   }
   .standings-table th {
     text-align: left;
@@ -604,37 +605,26 @@
   .standings-table td.dead-num { color: var(--dead); font-size: 16px; }
   .standings-table tr:hover { background: rgba(255,255,255,0.02); }
   .standings-table .rank-1 td.rank-cell { font-size: 24px; }
-  .standings-table .progress-cell {
-    width: 38%;
-    min-width: 140px;
-  }
-  .standings-table .progress-wrap {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
+  .standings-table td.progress-cell {
+    width: 35%;
+    padding-right: 16px;
   }
   .standings-table .progress-track {
-    flex: 1;
+    display: block;
+    width: 100%;
     height: 8px;
     background: rgba(255,255,255,0.06);
     border-radius: 4px;
     overflow: hidden;
-    min-width: 0;
+    box-sizing: border-box;
   }
   .standings-table .progress-fill {
+    display: block;
     height: 100%;
     background: linear-gradient(90deg, var(--alive) 0%, #5BC0BE 100%);
     border-radius: 4px;
     transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .standings-table .progress-text {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--cream-dim);
-    flex-shrink: 0;
-    min-width: 30px;
-    text-align: right;
+    max-width: 100%;
   }
 
   /* Participant cards (full roster) */
@@ -754,6 +744,7 @@
     .standings-table th, .standings-table td { padding: 8px 6px; }
     .standings-table td.rank-cell { font-size: 16px; width: 32px; }
     .standings-table td.name-cell { font-size: 14px; }
+    .standings-table td.progress-cell { width: 28%; padding-right: 8px; }
   }
 </style>
 </head>
@@ -780,8 +771,8 @@
   <!-- PANEL 1: TODAY -->
   <div class="panel active" id="panel-today">
     <section class="today-block">
-      <div class="today-date">Today's Matchups</div>
-      <div class="today-subtitle">Tuesday, June 30, 2026 · Round of 32</div>
+      <div class="today-date" id="todayDate">Today's Matchups</div>
+      <div class="today-subtitle" id="todaySubtitle">Tuesday, June 30, 2026 · Round of 32</div>
       <div class="matchup-row" id="todayMatchups"></div>
     </section>
   </div>
@@ -864,41 +855,176 @@
     "Curaçao": "🇨🇼", "New Zealand": "🇳🇿"
   };
 
-  // ===== STATUS =====
-  const status = {};
-  // Group stage out (didn't qualify for R32)
-  ["Haiti","Türkiye","Tunisia","Saudi Arabia","Iraq","Qatar","Jordan",
-   "Uzbekistan","New Zealand","Panama","Iran","Scotland","Czechia",
-   "Curaçao","Uruguay","South Korea"]
-    .forEach(t => status[t] = { state: "eliminated", stage: "GS" });
+  // ===== TOURNAMENT STATE =====
+  // The single source of truth for finished matches: { "TeamA vs TeamB": "WinnerTeam" }
+  // This auto-derives team status, bracket progression, and standings.
+  // The API will merge new results into this object on every poll.
+  // Group-stage out is a separate fixed list (not derivable from R32 matches).
+  const groupStageEliminated = new Set([
+    "Haiti","Türkiye","Tunisia","Saudi Arabia","Iraq","Qatar","Jordan",
+    "Uzbekistan","New Zealand","Panama","Iran","Scotland","Czechia",
+    "Curaçao","Uruguay","South Korea"
+  ]);
 
-  // R32 eliminations
-  ["South Africa","Japan","Germany","Netherlands"]
-    .forEach(t => status[t] = { state: "eliminated", stage: "R32" });
+  // matchResults: keyed by sorted team-pair to avoid order issues
+  // Value: { winner: "Team Name", scoreA, scoreB, round: "R32"|"R16"|"QF"|"SF"|"F" }
+  // Pre-seeded with the known completed R32 matches.
+  const matchResults = {};
+  function recordResult(teamA, teamB, winner, scoreA, scoreB, round, note) {
+    const key = pairKey(teamA, teamB);
+    matchResults[key] = { teamA, teamB, winner, scoreA, scoreB, round, note };
+  }
+  function pairKey(a, b) {
+    return [a, b].sort().join('::');
+  }
+  function getResult(teamA, teamB) {
+    return matchResults[pairKey(teamA, teamB)] || null;
+  }
 
-  // Through to R16 already (won R32)
-  ["Canada","Brazil","Paraguay","Morocco"]
-    .forEach(t => status[t] = { state: "advanced", stage: "R16" });
+  // Bracket structure: 16 R32 matches → 8 R16 (pairs) → 4 QF → 2 SF → Final.
+  // r32 lists the 16 R32 fixtures; r16Pairs lists which two R32 winners meet in R16, etc.
+  const r32 = [
+    { a: "South Africa", b: "Canada",                 date: "Sun 6/28" },
+    { a: "Netherlands",  b: "Morocco",                date: "Mon 6/29" },
+    { a: "Germany",      b: "Paraguay",               date: "Mon 6/29" },
+    { a: "France",       b: "Sweden",                 date: "Tue 6/30" },
+    { a: "Brazil",       b: "Japan",                  date: "Mon 6/29" },
+    { a: "Ivory Coast",  b: "Norway",                 date: "Tue 6/30" },
+    { a: "Mexico",       b: "Ecuador",                date: "Tue 6/30" },
+    { a: "England",      b: "DR Congo",               date: "Wed 7/1" },
+    { a: "Portugal",     b: "Croatia",                date: "Thu 7/2" },
+    { a: "Spain",        b: "Austria",                date: "Thu 7/2" },
+    { a: "United States",b: "Bosnia and Herzegovina", date: "Wed 7/1" },
+    { a: "Belgium",      b: "Senegal",                date: "Wed 7/1" },
+    { a: "Argentina",    b: "Cape Verde",             date: "Fri 7/3" },
+    { a: "Australia",    b: "Egypt",                  date: "Fri 7/3" },
+    { a: "Switzerland",  b: "Algeria",                date: "Thu 7/2" },
+    { a: "Colombia",     b: "Ghana",                  date: "Fri 7/3" }
+  ];
+  const r16Pairs = [
+    [0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11], [12, 13], [14, 15]
+  ];
+  const qfPairs = [ [0, 1], [2, 3], [4, 5], [6, 7] ];
+  const sfPairs = [ [0, 1], [2, 3] ];
 
-  // Playing today
-  ["Ivory Coast","Norway","France","Sweden","Mexico","Ecuador"]
-    .forEach(t => status[t] = { state: "today", stage: "R32" });
+  // Hardcoded initial results (these are the matches that completed before this
+  // file was deployed — the API may also re-confirm them, which is fine).
+  recordResult("South Africa", "Canada",      "Canada",   0, 1, "R32");
+  recordResult("Netherlands",  "Morocco",     "Morocco",  1, 1, "R32", "3-2 pens");
+  recordResult("Germany",      "Paraguay",    "Paraguay", 1, 1, "R32", "3-4 pens");
+  recordResult("Brazil",       "Japan",       "Brazil",   2, 1, "R32");
 
-  // Remaining alive (R32 still ahead)
-  ["England","DR Congo","Belgium","Senegal","United States","Bosnia and Herzegovina",
-   "Spain","Austria","Switzerland","Algeria","Portugal","Croatia",
-   "Egypt","Australia","Argentina","Cape Verde","Colombia","Ghana"]
-    .forEach(t => { if (!status[t]) status[t] = { state: "alive", stage: "R32" }; });
+  // Status is now DERIVED, not stored. It's recomputed every render.
+  let status = {};
 
-  // Make sure these are correctly marked alive
-  status["DR Congo"] = { state: "alive", stage: "R32" };
-  status["Algeria"] = { state: "alive", stage: "R32" };
-  status["Ghana"] = { state: "alive", stage: "R32" };
+  function deriveStatus() {
+    const s = {};
+    // Initialize all 48 teams from flags as alive at R32 (or out at GS if applicable)
+    Object.keys(flags).forEach(team => {
+      if (groupStageEliminated.has(team)) {
+        s[team] = { state: "eliminated", stage: "GS" };
+      } else {
+        s[team] = { state: "alive", stage: "R32" };
+      }
+    });
 
-  // Fallback for any team not yet set
-  Object.keys(flags).forEach(t => {
-    if (!status[t]) status[t] = { state: "alive", stage: "R32" };
-  });
+    // Walk the bracket, applying results to advance winners and eliminate losers.
+    // R32: r32[0..15], each result determines who appears in R16
+    // R16 winners derived from r16Pairs; QF from qfPairs; SF from sfPairs.
+    // We mark each round's loser as eliminated and the winner as either alive at
+    // the next round, or "advanced" if the next round hasn't kicked off yet.
+    const stageNames = ["R32", "R16", "QF", "SF", "F"];
+    const nextStageOf = { R32: "R16", R16: "QF", QF: "SF", SF: "F", F: "WON" };
+
+    function applyResult(team, beatTeam, round) {
+      if (s[team]) {
+        s[team] = { state: "alive", stage: nextStageOf[round] };
+      }
+      if (s[beatTeam]) {
+        s[beatTeam] = { state: "eliminated", stage: round };
+      }
+    }
+
+    // Build a current bracket-walk: we need to know which teams are in each round
+    // r32WithResults: for each R32 slot, the match + winner (or null if not played)
+    // Then derive R16 slots from r16Pairs, etc.
+    const r32State = r32.map(m => {
+      const r = getResult(m.a, m.b);
+      return r ? { ...m, winner: r.winner, result: r, played: true } : m;
+    });
+    r32State.forEach(m => {
+      if (m.played) applyResult(m.winner, m.a === m.winner ? m.b : m.a, "R32");
+    });
+
+    const r16Teams = r16Pairs.map(([iA, iB]) => {
+      const ma = r32State[iA], mb = r32State[iB];
+      return [ma.played ? ma.winner : null, mb.played ? mb.winner : null];
+    });
+    r16Teams.forEach(([a, b]) => {
+      if (!a || !b) return;
+      const r = getResult(a, b);
+      if (r) applyResult(r.winner, r.winner === a ? b : a, "R16");
+    });
+
+    const qfTeams = qfPairs.map(([iA, iB]) => {
+      const [a1, a2] = r16Teams[iA]; const [b1, b2] = r16Teams[iB];
+      const w1 = (a1 && a2) ? (getResult(a1, a2) || {}).winner : null;
+      const w2 = (b1 && b2) ? (getResult(b1, b2) || {}).winner : null;
+      return [w1, w2];
+    });
+    qfTeams.forEach(([a, b]) => {
+      if (!a || !b) return;
+      const r = getResult(a, b);
+      if (r) applyResult(r.winner, r.winner === a ? b : a, "QF");
+    });
+
+    const sfTeams = sfPairs.map(([iA, iB]) => {
+      const [a1, a2] = qfTeams[iA]; const [b1, b2] = qfTeams[iB];
+      const w1 = (a1 && a2) ? (getResult(a1, a2) || {}).winner : null;
+      const w2 = (b1 && b2) ? (getResult(b1, b2) || {}).winner : null;
+      return [w1, w2];
+    });
+    sfTeams.forEach(([a, b]) => {
+      if (!a || !b) return;
+      const r = getResult(a, b);
+      if (r) applyResult(r.winner, r.winner === a ? b : a, "SF");
+    });
+
+    // Final: pair the two SF winners
+    const [sf1A, sf1B] = sfTeams[0];
+    const [sf2A, sf2B] = sfTeams[1];
+    const finalist1 = (sf1A && sf1B) ? (getResult(sf1A, sf1B) || {}).winner : null;
+    const finalist2 = (sf2A && sf2B) ? (getResult(sf2A, sf2B) || {}).winner : null;
+    if (finalist1 && finalist2) {
+      const r = getResult(finalist1, finalist2);
+      if (r) applyResult(r.winner, r.winner === finalist1 ? finalist2 : finalist1, "F");
+    }
+
+    // "today" overlay applied after rendering, since it depends on todayMatches
+    // which is computed after deriveStatus. See markLiveTodayTeams() below.
+
+    // Expose derived state arrays for bracket rendering
+    s.__r32State = r32State;
+    s.__r16Teams = r16Teams;
+    s.__qfTeams = qfTeams;
+    s.__sfTeams = sfTeams;
+    s.__finalists = [finalist1, finalist2];
+    return s;
+  }
+
+  // Mark teams currently in live matches (called after derive + after todayMatches ready)
+  function markLiveTodayTeams(s) {
+    if (typeof todayMatches === 'undefined') return s;
+    todayMatches.forEach(m => {
+      if (m.isPending) return;
+      const score = resolveScore(m.teamA, m.teamB);
+      if (score.status === "live") {
+        if (s[m.teamA] && s[m.teamA].state === "alive") s[m.teamA] = { ...s[m.teamA], state: "today" };
+        if (s[m.teamB] && s[m.teamB].state === "alive") s[m.teamB] = { ...s[m.teamB], state: "today" };
+      }
+    });
+    return s;
+  }
 
   function ownerOf(team) {
     for (const [name, list] of Object.entries(rosters)) {
@@ -908,10 +1034,14 @@
   }
 
   function stageLabel(s) {
-    if (s.state === "today") return "TODAY";
-    if (s.state === "advanced") return "→ R16";
+    if (s.state === "today") return "LIVE";
     if (s.stage === "GS")  return "OUT · GROUP";
     if (s.stage === "R32") return s.state === "eliminated" ? "OUT · R32" : "R32";
+    if (s.stage === "R16") return s.state === "eliminated" ? "OUT · R16" : "→ R16";
+    if (s.stage === "QF")  return s.state === "eliminated" ? "OUT · QF"  : "→ QF";
+    if (s.stage === "SF")  return s.state === "eliminated" ? "OUT · SF"  : "→ SF";
+    if (s.stage === "F")   return s.state === "eliminated" ? "RUNNER-UP" : "→ FINAL";
+    if (s.stage === "WON") return "🏆 CHAMPION";
     return "";
   }
 
@@ -925,47 +1055,175 @@
     });
   });
 
-  // ===== TODAY'S MATCHUPS — auto-fetched live scores =====
+  // ===== TODAY'S MATCHUPS — auto-fetched live scores + auto-advancing bracket =====
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 🟢 AUTOMATIC live scores via TheSportsDB free public API (no key required).
-  // The page fetches scores every 60 seconds while open. If the API is unreachable
-  // (network error, CORS, rate-limited), the page falls back to the MANUAL OVERRIDE
-  // values below — so the page never goes dark.
+  // The page does TWO things every 60 seconds:
+  //   1. Fetches today's events (ET timezone) for the Today's Matchups tab
+  //   2. Fetches recently-completed matches for the league, propagates winners
+  //      through the bracket, and updates the standings
   //
-  // To set a MANUAL override (e.g. if the API is wrong or stale), edit `manualScores`:
-  //   status: "scheduled" | "live" | "final"
-  //   scoreA / scoreB: numbers
-  //   minute: string for live e.g. "67'" or "HT"
-  // The manual value takes precedence ONLY for keys present here. To return to
-  // automatic mode for a match, delete its entry from manualScores below.
+  // "Today" is computed in US Eastern Time (America/New_York). At 12:01am ET each
+  // day the page automatically pulls the new day's fixtures.
+  //
+  // MANUAL OVERRIDES (optional, for when the API is wrong or stale):
+  //   - manualScores: for individual live-score corrections (key: "TeamA-TeamB")
+  //   - manualResults: to force a final result (key: same; value has winner+scores)
+  // Both are empty by default — the page runs fully automatically.
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const manualScores = {
-    // Example:
-    // "Ivory Coast-Norway": { status: "final", scoreA: 1, scoreB: 1, minute: "FT (4-3 pens)" },
+    // "Mexico-Ecuador": { status: "live", scoreA: 1, scoreB: 1, minute: "67'" },
+  };
+  const manualResults = {
+    // "Mexico-Ecuador": { winner: "Mexico", scoreA: 2, scoreB: 1, round: "R32", note: "AET" },
   };
 
-  // The list of matches happening today. The teamA/teamB names MUST exactly match
-  // either our flag dictionary OR the TheSportsDB team names (we map both below).
-  const todayMatches = [
-    {
-      date: "2026-06-30",
-      location: "AT&T Stadium · Arlington",
-      teamA: "Ivory Coast", teamB: "Norway",
-      note: "Group E runner-up vs Group I runner-up"
-    },
-    {
-      date: "2026-06-30",
-      location: "Estadio Azteca · Mexico City",
-      teamA: "Mexico", teamB: "Ecuador",
-      note: "Group A winner vs Group E third-place"
-    },
-    {
-      date: "2026-06-30",
-      location: "MetLife Stadium · East Rutherford",
-      teamA: "France", teamB: "Sweden",
-      note: "Group I winner vs Group F third-place"
+  // ---- Fixtures table: maps date (YYYY-MM-DD ET) to that day's matches ----
+  // Each match: stadium + descriptive note. Teams are inferred from the bracket
+  // for R16+ once results are known; for R32 they come from the r32 array.
+  // This table tells the Today tab which matches happen on which date and where.
+  //
+  // Stadiums for matches whose teams aren't known yet (R16, QF, SF, Final) are
+  // still tied to the date — we just label them by their bracket slot.
+  const dailyFixtures = {
+    "2026-06-28": [
+      { teamA: "South Africa", teamB: "Canada",      location: "BMO Stadium · Toronto",        note: "R32 · Group F runner-up vs Host" }
+    ],
+    "2026-06-29": [
+      { teamA: "Netherlands", teamB: "Morocco",      location: "BBVA Stadium · Monterrey",     note: "R32 · Group D runner-up vs Group J winner" },
+      { teamA: "Germany",     teamB: "Paraguay",     location: "Gillette Stadium · Boston",    note: "R32 · Group B winner vs Group F third-place" },
+      { teamA: "Brazil",      teamB: "Japan",        location: "NRG Stadium · Houston",        note: "R32 · Group G winner vs Group K winner" }
+    ],
+    "2026-06-30": [
+      { teamA: "Ivory Coast", teamB: "Norway",       location: "AT&T Stadium · Arlington",     note: "R32 · Group E runner-up vs Group I runner-up" },
+      { teamA: "Mexico",      teamB: "Ecuador",      location: "Estadio Azteca · Mexico City", note: "R32 · Group A winner vs Group E third-place" },
+      { teamA: "France",      teamB: "Sweden",       location: "MetLife Stadium · NJ",         note: "R32 · Group I winner vs Group F third-place" }
+    ],
+    "2026-07-01": [
+      { teamA: "England",     teamB: "DR Congo",     location: "Mercedes-Benz Stadium · Atlanta",       note: "R32" },
+      { teamA: "Belgium",     teamB: "Senegal",      location: "Lumen Field · Seattle",                 note: "R32" },
+      { teamA: "United States", teamB: "Bosnia and Herzegovina", location: "Levi's Stadium · Santa Clara", note: "R32" }
+    ],
+    "2026-07-02": [
+      { teamA: "Portugal",    teamB: "Croatia",      location: "BMO Stadium · Toronto",        note: "R32" },
+      { teamA: "Spain",       teamB: "Austria",      location: "SoFi Stadium · Los Angeles",   note: "R32" },
+      { teamA: "Switzerland", teamB: "Algeria",      location: "BC Place · Vancouver",         note: "R32" }
+    ],
+    "2026-07-03": [
+      { teamA: "Argentina",   teamB: "Cape Verde",   location: "Hard Rock Stadium · Miami",    note: "R32" },
+      { teamA: "Australia",   teamB: "Egypt",        location: "AT&T Stadium · Arlington",     note: "R32" },
+      { teamA: "Colombia",    teamB: "Ghana",        location: "Arrowhead Stadium · Kansas City", note: "R32" }
+    ],
+    "2026-07-04": [
+      { bracketSlot: { round: "R16", index: 0 }, location: "NRG Stadium · Houston",                note: "R16 · Round of 32 winners" },
+      { bracketSlot: { round: "R16", index: 1 }, location: "Lincoln Financial Field · Philadelphia", note: "R16" }
+    ],
+    "2026-07-05": [
+      { bracketSlot: { round: "R16", index: 2 }, location: "MetLife Stadium · NJ",                  note: "R16" },
+      { bracketSlot: { round: "R16", index: 3 }, location: "Estadio Azteca · Mexico City",          note: "R16" }
+    ],
+    "2026-07-06": [
+      { bracketSlot: { round: "R16", index: 4 }, location: "AT&T Stadium · Arlington",              note: "R16" },
+      { bracketSlot: { round: "R16", index: 5 }, location: "Lumen Field · Seattle",                 note: "R16" }
+    ],
+    "2026-07-07": [
+      { bracketSlot: { round: "R16", index: 6 }, location: "Mercedes-Benz Stadium · Atlanta",       note: "R16" },
+      { bracketSlot: { round: "R16", index: 7 }, location: "BC Place · Vancouver",                  note: "R16" }
+    ],
+    "2026-07-09": [
+      { bracketSlot: { round: "QF", index: 0 }, location: "Gillette Stadium · Boston",              note: "Quarter-final" }
+    ],
+    "2026-07-10": [
+      { bracketSlot: { round: "QF", index: 1 }, location: "SoFi Stadium · Los Angeles",             note: "Quarter-final" }
+    ],
+    "2026-07-11": [
+      { bracketSlot: { round: "QF", index: 2 }, location: "Hard Rock Stadium · Miami",              note: "Quarter-final" }
+    ],
+    "2026-07-12": [
+      { bracketSlot: { round: "QF", index: 3 }, location: "Arrowhead Stadium · Kansas City",        note: "Quarter-final" }
+    ],
+    "2026-07-14": [
+      { bracketSlot: { round: "SF", index: 0 }, location: "AT&T Stadium · Arlington",               note: "Semi-final" }
+    ],
+    "2026-07-15": [
+      { bracketSlot: { round: "SF", index: 1 }, location: "Mercedes-Benz Stadium · Atlanta",        note: "Semi-final" }
+    ],
+    "2026-07-18": [
+      { bracketSlot: { round: "3RD", index: 0 }, location: "Hard Rock Stadium · Miami",             note: "Third-place play-off" }
+    ],
+    "2026-07-19": [
+      { bracketSlot: { round: "F", index: 0 }, location: "MetLife Stadium · East Rutherford",       note: "FINAL · 2026 FIFA World Cup" }
+    ]
+  };
+
+  // ---- ET (America/New_York) date helper ----
+  // Returns the current date in ET as "YYYY-MM-DD"
+  function etDateString(d = new Date()) {
+    // Intl.DateTimeFormat gives us ET parts reliably across DST
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(d);
+    const get = type => parts.find(p => p.type === type).value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  }
+
+  // Compute today's matchups based on ET date. If today has no fixtures, look
+  // ahead up to 3 days to surface the next upcoming day's matches (so the tab
+  // never looks empty on rest days like July 8 between QF and SF).
+  function computeTodayMatches() {
+    const today = etDateString();
+    let dateKey = today;
+    let lookahead = 0;
+    while (lookahead < 4 && !dailyFixtures[dateKey]) {
+      lookahead++;
+      const d = new Date(today + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() + lookahead);
+      dateKey = etDateString(d);
     }
-  ];
+    const fixtures = dailyFixtures[dateKey] || [];
+    return fixtures.map(f => {
+      // Resolve bracketSlot fixtures to actual team names from the derived bracket
+      if (f.bracketSlot) {
+        const { round, index } = f.bracketSlot;
+        const status = deriveStatus(); // raw — no live overlay needed for slot resolution
+        let teamA = null, teamB = null;
+        if (round === "R16" && status.__r16Teams[index]) {
+          [teamA, teamB] = status.__r16Teams[index];
+        } else if (round === "QF" && status.__qfTeams[index]) {
+          [teamA, teamB] = status.__qfTeams[index];
+        } else if (round === "SF" && status.__sfTeams[index]) {
+          [teamA, teamB] = status.__sfTeams[index];
+        } else if (round === "F") {
+          [teamA, teamB] = status.__finalists;
+        } else if (round === "3RD") {
+          // 3rd place = both SF losers; we don't track that explicitly here
+          teamA = null; teamB = null;
+        }
+        return {
+          date: dateKey, location: f.location, note: f.note,
+          teamA: teamA || "TBD",
+          teamB: teamB || "TBD",
+          isPending: !teamA || !teamB
+        };
+      }
+      return { ...f, date: dateKey };
+    });
+  }
+
+  let todayMatches = computeTodayMatches();
+  let lastEtDate = etDateString();
+
+  // Re-compute today's matches if the ET day has rolled over
+  function checkDayRollover() {
+    const now = etDateString();
+    if (now !== lastEtDate) {
+      lastEtDate = now;
+      todayMatches = computeTodayMatches();
+      return true;
+    }
+    return false;
+  }
 
   // Map TheSportsDB team-name variations → our canonical names
   const tsdbNameMap = {
@@ -983,16 +1241,17 @@
     "Bosnia and Herzegovina": "Bosnia and Herzegovina",
     "Bosnia & Herzegovina": "Bosnia and Herzegovina",
     "DR Congo": "DR Congo",
-    "Congo DR": "DR Congo"
+    "Congo DR": "DR Congo",
+    "Cape Verde Islands": "Cape Verde",
+    "Cape Verde": "Cape Verde"
   };
   const normalizeTeamName = (n) => tsdbNameMap[n] || n;
 
-  // In-memory store: fetched scores from API; updated by fetchLiveScores()
-  let apiScores = {}; // { "Ivory Coast-Norway": { status, scoreA, scoreB, minute } }
+  // In-memory stores
+  let apiScores = {}; // live/scheduled scores: { "TeamA-TeamB": {status, scoreA, scoreB, minute} }
   let lastFetchTime = null;
   let lastFetchStatus = "pending"; // "pending" | "ok" | "error"
 
-  // Resolve final score for one match: manual override > API > scheduled fallback
   function resolveScore(teamA, teamB) {
     const key = `${teamA}-${teamB}`;
     if (manualScores[key]) return manualScores[key];
@@ -1002,70 +1261,102 @@
 
   // Render the today panel
   const todayEl = document.getElementById('todayMatchups');
+  const todayDateEl = document.getElementById('todayDate');
   function renderToday() {
     todayEl.innerHTML = '';
-    todayMatches.forEach(m => {
-      const ownerA = ownerOf(m.teamA);
-      const ownerB = ownerOf(m.teamB);
-      const cA = ownerA ? PCOLORS[ownerA] : 'var(--cream-dim)';
-      const cB = ownerB ? PCOLORS[ownerB] : 'var(--cream-dim)';
-
-      const score = resolveScore(m.teamA, m.teamB);
-
-      let statusHTML = '';
-      let scoreHTML = '';
-      if (score.status === "live") {
-        statusHTML = `<div class="matchup-status live"><span class="live-dot"></span>LIVE${score.minute ? ' · ' + score.minute : ''}</div>`;
-        scoreHTML = `<div class="matchup-score">
-          <span class="score-num live-num">${score.scoreA}</span>
-          <span class="score-dash">–</span>
-          <span class="score-num live-num">${score.scoreB}</span>
-        </div>`;
-      } else if (score.status === "final") {
-        statusHTML = `<div class="matchup-status final">FULL TIME${score.minute ? ' · ' + score.minute : ''}</div>`;
-        scoreHTML = `<div class="matchup-score">
-          <span class="score-num">${score.scoreA}</span>
-          <span class="score-dash">–</span>
-          <span class="score-num">${score.scoreB}</span>
-        </div>`;
+    // Update header date
+    if (todayDateEl) {
+      const now = new Date();
+      const etDayName = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+      }).format(now);
+      // If we're showing a lookahead day (not actually today), label it as such
+      const todayKey = etDateString();
+      const shownKey = todayMatches[0]?.date || todayKey;
+      if (shownKey === todayKey) {
+        todayDateEl.textContent = `Today's Matchups`;
+        document.getElementById('todaySubtitle').textContent = etDayName;
       } else {
-        statusHTML = `<div class="matchup-status scheduled">UPCOMING</div>`;
+        const shown = new Date(shownKey + 'T12:00:00Z');
+        const shownLabel = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric'
+        }).format(shown);
+        todayDateEl.textContent = `Next Matchday`;
+        document.getElementById('todaySubtitle').textContent = `${shownLabel} · (no matches today)`;
       }
+    }
 
-      const div = document.createElement('div');
-      div.className = 'matchup' + (score.status === 'live' ? ' is-live' : '');
-      div.innerHTML = `
-        ${statusHTML}
-        <div class="matchup-teams">
-          <div class="matchup-team">
-            <div class="flag-lg">${flags[m.teamA]}</div>
-            <div class="tname">${m.teamA}</div>
-            <div class="owner" style="color: ${cA}">${ownerA || '—'}</div>
+    if (todayMatches.length === 0) {
+      todayEl.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--cream-dim); padding: 40px; font-style: italic;">No matches scheduled. Tournament may be over.</div>';
+    } else {
+      todayMatches.forEach(m => {
+        const ownerA = ownerOf(m.teamA);
+        const ownerB = ownerOf(m.teamB);
+        const cA = ownerA ? PCOLORS[ownerA] : 'var(--cream-dim)';
+        const cB = ownerB ? PCOLORS[ownerB] : 'var(--cream-dim)';
+
+        const score = m.isPending ? { status: "scheduled" } : resolveScore(m.teamA, m.teamB);
+
+        let statusHTML = '';
+        let scoreHTML = '';
+        if (score.status === "live") {
+          statusHTML = `<div class="matchup-status live"><span class="live-dot"></span>LIVE${score.minute ? ' · ' + score.minute : ''}</div>`;
+          scoreHTML = `<div class="matchup-score">
+            <span class="score-num live-num">${score.scoreA}</span>
+            <span class="score-dash">–</span>
+            <span class="score-num live-num">${score.scoreB}</span>
+          </div>`;
+        } else if (score.status === "final") {
+          statusHTML = `<div class="matchup-status final">FULL TIME${score.minute ? ' · ' + score.minute : ''}</div>`;
+          scoreHTML = `<div class="matchup-score">
+            <span class="score-num">${score.scoreA}</span>
+            <span class="score-dash">–</span>
+            <span class="score-num">${score.scoreB}</span>
+          </div>`;
+        } else if (m.isPending) {
+          statusHTML = `<div class="matchup-status scheduled">AWAITING TEAMS</div>`;
+        } else {
+          statusHTML = `<div class="matchup-status scheduled">UPCOMING</div>`;
+        }
+
+        const flagA = flags[m.teamA] || '⚪';
+        const flagB = flags[m.teamB] || '⚪';
+
+        const div = document.createElement('div');
+        div.className = 'matchup' + (score.status === 'live' ? ' is-live' : '');
+        div.innerHTML = `
+          ${statusHTML}
+          <div class="matchup-teams">
+            <div class="matchup-team">
+              <div class="flag-lg">${flagA}</div>
+              <div class="tname">${m.teamA}</div>
+              <div class="owner" style="color: ${cA}">${ownerA || '—'}</div>
+            </div>
+            <div class="matchup-vs-block">
+              ${scoreHTML || '<div class="matchup-vs">vs</div>'}
+            </div>
+            <div class="matchup-team">
+              <div class="flag-lg">${flagB}</div>
+              <div class="tname">${m.teamB}</div>
+              <div class="owner" style="color: ${cB}">${ownerB || '—'}</div>
+            </div>
           </div>
-          <div class="matchup-vs-block">
-            ${scoreHTML || '<div class="matchup-vs">vs</div>'}
-          </div>
-          <div class="matchup-team">
-            <div class="flag-lg">${flags[m.teamB]}</div>
-            <div class="tname">${m.teamB}</div>
-            <div class="owner" style="color: ${cB}">${ownerB || '—'}</div>
-          </div>
-        </div>
-        <div class="matchup-location">${m.location}</div>
-        <div class="matchup-note">${m.note}</div>
-      `;
-      todayEl.appendChild(div);
-    });
+          <div class="matchup-location">${m.location}</div>
+          <div class="matchup-note">${m.note}</div>
+        `;
+        todayEl.appendChild(div);
+      });
+    }
+
     // Append source/freshness footer
     const footer = document.createElement('div');
     footer.className = 'fetch-footer';
     const sourceLabel =
       lastFetchStatus === 'ok'    ? `Live data · TheSportsDB · updated ${timeAgoText(lastFetchTime)}` :
-      lastFetchStatus === 'error' ? `Live feed unavailable · showing manual values · retry in 60s` :
+      lastFetchStatus === 'error' ? `Live feed unavailable · showing cached values · retry in 60s` :
                                     `Fetching live scores…`;
     footer.innerHTML = `<span class="fetch-dot ${lastFetchStatus}"></span>${sourceLabel}`;
     todayEl.parentElement.appendChild(footer);
-    // remove any previous footers (keep only the latest)
     const footers = todayEl.parentElement.querySelectorAll('.fetch-footer');
     if (footers.length > 1) {
       for (let i = 0; i < footers.length - 1; i++) footers[i].remove();
@@ -1082,44 +1373,101 @@
     return Math.floor(mins / 60) + ' hr ago';
   }
 
-  // Determine status from TheSportsDB event.strStatus
-  // Known values include: "Match Finished", "Not Started", "First Half", "Halftime",
-  // "Second Half", "Extra Time", "Penalty Shootout", "Match Postponed", etc.
-  // Also live games often have strStatus = a minute number like "67'" or just a status string.
   function parseTsdbEvent(ev) {
-    const status = (ev.strStatus || '').toLowerCase();
-    const homeScore = ev.intHomeScore !== null ? parseInt(ev.intHomeScore, 10) : null;
-    const awayScore = ev.intAwayScore !== null ? parseInt(ev.intAwayScore, 10) : null;
+    const stat = (ev.strStatus || '').toLowerCase().trim();
+    const safeInt = v => {
+      if (v === null || v === undefined || v === '' || v === 'null') return null;
+      const n = parseInt(v, 10);
+      return Number.isNaN(n) ? null : n;
+    };
+    const homeScore = safeInt(ev.intHomeScore);
+    const awayScore = safeInt(ev.intAwayScore);
     let parsedStatus = "scheduled";
     let minute = undefined;
 
-    if (status.includes('finished') || status === 'ft' || status.includes('full time')
-        || status.includes('after penalties') || status.includes('aet')) {
+    if (stat.includes('finished') || stat === 'ft' || stat.includes('full time')
+        || stat.includes('after penalties') || stat.includes('aet')
+        || stat.includes('after extra')) {
       parsedStatus = "final";
-    } else if (status === 'not started' || status === 'ns' || status === '' || status === 'scheduled') {
+      if (stat.includes('penalties') || stat.includes('pens')) minute = "AET / Pens";
+      else if (stat.includes('extra') || stat.includes('aet')) minute = "AET";
+    } else if (stat === 'not started' || stat === 'ns' || stat === '' || stat === 'scheduled') {
       parsedStatus = (homeScore !== null && awayScore !== null && (homeScore > 0 || awayScore > 0))
         ? "live" : "scheduled";
     } else {
-      // anything else (first half, halftime, second half, minute number, etc.)
       parsedStatus = "live";
-      if (status === 'halftime' || status === 'ht') minute = 'HT';
-      else if (status === 'first half' || status === '1h') minute = '1H';
-      else if (status === 'second half' || status === '2h') minute = '2H';
-      else if (status === 'extra time' || status === 'et')   minute = 'ET';
-      else if (status === 'penalty shootout' || status === 'pen') minute = 'Pens';
-      else if (/^\d+'?$/.test(status)) minute = status.includes("'") ? status : status + "'";
-      else if (status) minute = ev.strStatus; // raw fallback
+      if (stat === 'halftime' || stat === 'ht') minute = 'HT';
+      else if (stat === 'first half' || stat === '1h') minute = '1H';
+      else if (stat === 'second half' || stat === '2h') minute = '2H';
+      else if (stat === 'extra time' || stat === 'et')   minute = 'ET';
+      else if (stat === 'penalty shootout' || stat === 'pen') minute = 'Pens';
+      else if (/^\d+'?$/.test(stat)) minute = stat.includes("'") ? stat : stat + "'";
+      else if (stat) minute = ev.strStatus;
     }
     return { status: parsedStatus, scoreA: homeScore, scoreB: awayScore, minute };
   }
 
+  // Determine which "round" a finished match belongs to based on its date.
+  // Used to record results in the bracket. We map by date → round.
+  function roundForDate(dateStr) {
+    if (!dateStr) return "R32";
+    if (dateStr >= "2026-07-19") return "F";
+    if (dateStr >= "2026-07-14") return "SF";
+    if (dateStr >= "2026-07-09") return "QF";
+    if (dateStr >= "2026-07-04") return "R16";
+    return "R32";
+  }
+
+  // Merge a finished match into matchResults (auto-advances bracket on next render)
+  function recordFinishedEvent(ev) {
+    const home = normalizeTeamName(ev.strHomeTeam);
+    const away = normalizeTeamName(ev.strAwayTeam);
+    const safeInt = v => {
+      if (v === null || v === undefined || v === '' || v === 'null') return null;
+      const n = parseInt(v, 10);
+      return Number.isNaN(n) ? null : n;
+    };
+    const homeScore = safeInt(ev.intHomeScore);
+    const awayScore = safeInt(ev.intAwayScore);
+    if (homeScore === null || awayScore === null) return;
+    // Determine winner (in knockout, must always have one — penalties decide)
+    let winner = null;
+    if (homeScore > awayScore) winner = home;
+    else if (awayScore > homeScore) winner = away;
+    else {
+      // tied at FT — look for penalty result in extra-score fields
+      const hPen = safeInt(ev.intHomeScoreExtra);
+      const aPen = safeInt(ev.intAwayScoreExtra);
+      if (hPen !== null && aPen !== null && hPen !== aPen) {
+        winner = hPen > aPen ? home : away;
+      }
+      if (!winner) return;
+    }
+    const round = roundForDate(ev.dateEvent);
+    const note = (ev.strStatus || '').toLowerCase().includes('pen') ? 'pens' :
+                 (ev.strStatus || '').toLowerCase().includes('aet') ? 'AET' : undefined;
+    recordResult(home, away, winner, homeScore, awayScore, round, note);
+  }
+
+  // Apply manual overrides into matchResults (these win against the API)
+  function applyManualResults() {
+    Object.entries(manualResults).forEach(([key, r]) => {
+      // key is "TeamA-TeamB"
+      const [a, b] = key.split('-');
+      if (!a || !b) return;
+      recordResult(a, b, r.winner, r.scoreA, r.scoreB, r.round || roundForDate(""), r.note);
+    });
+  }
+
   async function fetchLiveScores() {
-    // We fetch matches for each unique date in todayMatches and merge.
-    const dates = Array.from(new Set(todayMatches.map(m => m.date)));
+    let rolled = checkDayRollover();
+    const todayKey = etDateString();
+    const dateKey = todayMatches[0]?.date || todayKey;
     const newApiScores = {};
     try {
-      for (const d of dates) {
-        const url = `https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=${d}&l=4429`;
+      // 1. Fetch today's events for live scores on the Today tab
+      {
+        const url = `https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=${dateKey}&l=4429`;
         const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const json = await res.json();
@@ -1127,38 +1475,74 @@
         events.forEach(ev => {
           const home = normalizeTeamName(ev.strHomeTeam);
           const away = normalizeTeamName(ev.strAwayTeam);
-          // Match against our todayMatches in either home/away order
           for (const m of todayMatches) {
-            if (m.date !== d) continue;
+            if (m.isPending) continue;
             const matches =
               (home === m.teamA && away === m.teamB) ||
               (home === m.teamB && away === m.teamA);
             if (matches) {
               const parsed = parseTsdbEvent(ev);
-              // If the TSDB returned the order flipped, swap scores so they map to teamA/teamB
               if (home === m.teamB && away === m.teamA) {
-                const tmp = parsed.scoreA;
-                parsed.scoreA = parsed.scoreB;
-                parsed.scoreB = tmp;
+                const tmp = parsed.scoreA; parsed.scoreA = parsed.scoreB; parsed.scoreB = tmp;
               }
               newApiScores[`${m.teamA}-${m.teamB}`] = parsed;
+              // Also: if it just finished, record the result so the bracket advances
+              if (parsed.status === "final" && parsed.scoreA !== null && parsed.scoreB !== null) {
+                recordFinishedEvent(ev);
+              }
             }
           }
         });
       }
+      // 2. Fetch recently-completed league matches (handles results that
+      //    finished overnight or aren't on today's tab)
+      try {
+        const pastUrl = `https://www.thesportsdb.com/api/v1/json/123/eventspastleague.php?id=4429`;
+        const pastRes = await fetch(pastUrl, { cache: 'no-store' });
+        if (pastRes.ok) {
+          const pastJson = await pastRes.json();
+          const pastEvents = pastJson.events || [];
+          pastEvents.forEach(ev => {
+            const parsed = parseTsdbEvent(ev);
+            if (parsed.status === "final" && parsed.scoreA !== null && parsed.scoreB !== null) {
+              recordFinishedEvent(ev);
+            }
+          });
+        }
+      } catch (e) { /* past-events failure shouldn't break today's tab */ }
+
       apiScores = newApiScores;
       lastFetchStatus = 'ok';
       lastFetchTime = Date.now();
     } catch (e) {
       lastFetchStatus = 'error';
-      // keep last successful apiScores (don't wipe) — still better than nothing
     }
+    // Always apply manual overrides last so they win
+    applyManualResults();
+    // Re-derive status and re-render all panels
+    status = markLiveTodayTeams(deriveStatus());
     renderToday();
+    if (typeof renderBracket === 'function') renderBracket();
+    if (typeof renderStandings === 'function') renderStandings();
   }
 
+  // Day-rollover check independently of API: at minute 1 of each ET day,
+  // re-compute today's matches even if the network is down.
+  setInterval(() => {
+    if (checkDayRollover()) {
+      status = markLiveTodayTeams(deriveStatus());
+      renderToday();
+      if (typeof renderBracket === 'function') renderBracket();
+      if (typeof renderStandings === 'function') renderStandings();
+    }
+  }, 30 * 1000);
+
   // Initial render + first fetch + 60s polling
+  applyManualResults();
+  status = markLiveTodayTeams(deriveStatus());
   renderToday();
-  fetchLiveScores();
+  // fetchLiveScores() is called at the END of the script, after renderBracket
+  // and renderStandings are defined and date arrays are populated.
   setInterval(fetchLiveScores, 60 * 1000);
 
   // ===== BRACKET =====
@@ -1205,53 +1589,7 @@
   //  R32 #16: Colombia vs Ghana(elim)
   //  → R16 #8
 
-  // Each R32 match: { a, b, state: "played"|"today"|"upcoming", winner?, note? }
-  const r32 = [
-    // R16 #1 → Canada vs Morocco
-    { a: "South Africa", b: "Canada", state: "played", winner: "Canada", result: "0-1", date: "Sun 6/28" },
-    { a: "Netherlands", b: "Morocco", state: "played", winner: "Morocco", result: "1-1 (3-2 pens)", date: "Mon 6/29" },
-    // R16 #2 → Paraguay vs W(Fra/Swe)
-    { a: "Germany", b: "Paraguay", state: "played", winner: "Paraguay", result: "1-1 (3-4 pens)", date: "Mon 6/29" },
-    { a: "France", b: "Sweden", state: "today", date: "Tue 6/30" },
-    // R16 #3 → Brazil vs W(Civ/Nor)
-    { a: "Brazil", b: "Japan", state: "played", winner: "Brazil", result: "2-1", date: "Mon 6/29" },
-    { a: "Ivory Coast", b: "Norway", state: "today", date: "Tue 6/30" },
-    // R16 #4 → W(Mex/Ecu) vs W(Eng/DRC)
-    { a: "Mexico", b: "Ecuador", state: "today", date: "Tue 6/30" },
-    { a: "England", b: "DR Congo", state: "upcoming", date: "Wed 7/1" },
-    // R16 #5 → W(Por/Cro) vs W(Spa/Aut)
-    { a: "Portugal", b: "Croatia", state: "upcoming", date: "Thu 7/2" },
-    { a: "Spain", b: "Austria", state: "upcoming", date: "Thu 7/2" },
-    // R16 #6 → W(USA/Bos) vs W(Bel/Sen)
-    { a: "United States", b: "Bosnia and Herzegovina", state: "upcoming", date: "Wed 7/1" },
-    { a: "Belgium", b: "Senegal", state: "upcoming", date: "Wed 7/1" },
-    // R16 #7 → W(Arg/CapV) vs W(Aus/Egy)
-    { a: "Argentina", b: "Cape Verde", state: "upcoming", date: "Fri 7/3" },
-    { a: "Australia", b: "Egypt", state: "upcoming", date: "Fri 7/3" },
-    // R16 #8 → W(Swi/Alg) vs W(Col/Gha)
-    { a: "Switzerland", b: "Algeria", state: "upcoming", date: "Thu 7/2" },
-    { a: "Colombia", b: "Ghana", state: "upcoming", date: "Fri 7/3" }
-  ];
-
-  // R16 pairings: pairs of R32 (indices) → fed into one R16 slot
-  const r16Pairs = [
-    [0, 1],   // Can vs Mor
-    [2, 3],   // W(Fra/Swe) vs Paraguay
-    [4, 5],   // W(Civ/Nor) vs Brazil
-    [6, 7],   // W(Por/Cro) vs W(Mex/Ecu)
-    [8, 9],   // W(Bel/Sen) vs W(Eng/DRC)
-    [10, 11], // W(Spa/Aut) vs W(USA/Bos)
-    [12, 13], // W(Swi/Alg) vs W(Egy/Aus)
-    [14, 15]  // W(Arg/CapV) vs W(Col/?)
-  ];
-  // QF pairings: pairs of R16 (indices)
-  const qfPairs = [
-    [0, 1], [2, 3], [4, 5], [6, 7]
-  ];
-  // SF pairings
-  const sfPairs = [
-    [0, 1], [2, 3]
-  ];
+  // (r32, r16Pairs, qfPairs, sfPairs are declared earlier — needed by deriveStatus)
 
   // 3-letter FIFA country codes
   const codes = {
@@ -1294,45 +1632,63 @@
     `;
   }
 
-  // Render an R32 match card
+  // Render R32 card uses matchResults
   function r32Card(m) {
+    const result = getResult(m.a, m.b);
     let cls = 'bmatch';
-    if (m.state === 'played') cls += ' played';
-    else if (m.state === 'today') cls += ' today';
-    const aRole = m.state === 'played' ? (m.winner === m.a ? 'winner' : 'loser') : '';
-    const bRole = m.state === 'played' ? (m.winner === m.b ? 'winner' : 'loser') : '';
+    const isToday = todayMatches.some(tm =>
+      !tm.isPending &&
+      ((tm.teamA === m.a && tm.teamB === m.b) || (tm.teamA === m.b && tm.teamB === m.a))
+    );
+    if (result) cls += ' played';
+    else if (isToday) cls += ' today';
+    const aRole = result ? (result.winner === m.a ? 'winner' : 'loser') : '';
+    const bRole = result ? (result.winner === m.b ? 'winner' : 'loser') : '';
+    let resultText = '';
+    if (result) {
+      resultText = `${result.scoreA}-${result.scoreB}${result.note ? ' · ' + result.note : ''}`;
+    }
     return `
       <div class="${cls}">
         <div class="bdate">${m.dateLabel || m.date}</div>
         ${teamRow(m.a, aRole)}
         ${teamRow(m.b, bRole)}
-        ${m.result ? `<div class="bresult">${m.result}</div>` : ''}
+        ${resultText ? `<div class="bresult">${resultText}</div>` : ''}
       </div>
     `;
   }
 
-  function laterCard(matchA, matchB, dateLabel) {
-    const getWinner = m => (m && m.state === 'played') ? m.winner : null;
-    const wA = getWinner(matchA);
-    const wB = getWinner(matchB);
+  // Render an R16+ card using derived team slots and matchResults
+  function laterCardFromTeams(teamA, teamB, dateLabel) {
+    const result = (teamA && teamB) ? getResult(teamA, teamB) : null;
+    let cls = 'bmatch';
+    if (result) cls += ' played';
+    else if (!teamA || !teamB) cls += ' tbd';
+    const aRole = result ? (result.winner === teamA ? 'winner' : 'loser') : '';
+    const bRole = result ? (result.winner === teamB ? 'winner' : 'loser') : '';
+    let resultText = '';
+    if (result) {
+      resultText = `${result.scoreA}-${result.scoreB}${result.note ? ' · ' + result.note : ''}`;
+    }
     return `
-      <div class="bmatch tbd">
+      <div class="${cls}">
         <div class="bdate">${dateLabel}</div>
-        ${teamRow(wA, '')}
-        ${teamRow(wB, '')}
+        ${teamRow(teamA, aRole)}
+        ${teamRow(teamB, bRole)}
+        ${resultText ? `<div class="bresult">${resultText}</div>` : ''}
       </div>
     `;
   }
 
   // R32 date labels
   const r32Dates = [
-    "Sun 6/28 · LA",
+    "Sun 6/28 · Toronto",
     "Mon 6/29 · Monterrey",
     "Mon 6/29 · Boston",
-    "Tue 6/30 · MetLife · TODAY",
+    "Tue 6/30 · MetLife",
     "Mon 6/29 · Houston",
-    "Tue 6/30 · Dallas · TODAY",
-    "Tue 6/30 · Mexico City · TODAY",
+    "Tue 6/30 · Dallas",
+    "Tue 6/30 · Mexico City",
     "Wed 7/1 · Atlanta",
     "Thu 7/2 · Toronto",
     "Thu 7/2 · SoFi LA",
@@ -1365,18 +1721,6 @@
     "Tue Jul 14 · Dallas",
     "Wed Jul 15 · Atlanta"
   ];
-
-  const r16Cards = r16Pairs.map(([iA, iB], i) => laterCard(r32[iA], r32[iB], r16Dates[i]));
-  const qfCards = qfPairs.map((_, i) => laterCard(null, null, qfDates[i]));
-  const sfCards = sfPairs.map((_, i) => laterCard(null, null, sfDates[i]));
-
-  const finalCard = `
-    <div class="bmatch tbd final-match">
-      <div class="bdate">FINAL · Sun Jul 19 · MetLife</div>
-      ${teamRow(null, '')}
-      ${teamRow(null, '')}
-    </div>
-  `;
 
   // SVG connector for a column
   function connectorSVG(direction) {
@@ -1415,19 +1759,7 @@
     `;
   }
 
-  // LEFT side (R16 matches 1-4 → QF 1-2 → SF 1)
-  const leftR32 = r32.slice(0, 8).map(r32Card);
-  const leftR16 = r16Cards.slice(0, 4);
-  const leftQF = qfCards.slice(0, 2);
-  const leftSF = sfCards[0];
-
-  // RIGHT side (R16 matches 5-8 → QF 3-4 → SF 2)
-  const rightR32 = r32.slice(8, 16).map(r32Card);
-  const rightR16 = r16Cards.slice(4, 8);
-  const rightQF = qfCards.slice(2, 4);
-  const rightSF = sfCards[1];
-
-  // Trophy SVG (original artwork inspired by traditional World Cup trophy form)
+  // Trophy SVG (original artwork)
   const trophySVG = `
     <svg class="trophy-art" width="160" height="190" viewBox="0 0 160 190" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -1459,114 +1791,164 @@
   `;
 
   const bracketEl = document.getElementById('bracket');
-  bracketEl.innerHTML = `
-    <div class="bracket-side left">
-      ${cardColumn('Round of 32', 'June 28 – July 3', leftR32)}
-      ${connectorColumn(4, 'ltr')}
-      ${cardColumn('Round of 16', 'July 4 – 7', leftR16)}
-      ${connectorColumn(2, 'ltr')}
-      ${cardColumn('Quarter-final', 'July 9 – 12', leftQF)}
-      ${connectorColumn(1, 'ltr')}
-      ${cardColumn('Semi-final', 'July 14', [leftSF])}
-    </div>
 
-    <div class="trophy-col">
-      ${trophySVG}
-      <div class="trophy-label">World Cup 2026</div>
-      <div class="trophy-sub">The Final · July 19</div>
-      ${finalCard}
-    </div>
+  function renderBracket() {
+    // Use derived state's bracket slots
+    const r16Cards = r16Pairs.map(([iA, iB], i) => {
+      const [a, b] = status.__r16Teams ? status.__r16Teams[i] : [null, null];
+      return laterCardFromTeams(a, b, r16Dates[i]);
+    });
+    const qfCards = qfPairs.map((_, i) => {
+      const [a, b] = status.__qfTeams ? status.__qfTeams[i] : [null, null];
+      return laterCardFromTeams(a, b, qfDates[i]);
+    });
+    const sfCards = sfPairs.map((_, i) => {
+      const [a, b] = status.__sfTeams ? status.__sfTeams[i] : [null, null];
+      return laterCardFromTeams(a, b, sfDates[i]);
+    });
+    const [finA, finB] = status.__finalists || [null, null];
+    const finalResult = (finA && finB) ? getResult(finA, finB) : null;
+    let finalCls = 'bmatch final-match';
+    if (finalResult) finalCls += ' played';
+    else if (!finA || !finB) finalCls += ' tbd';
+    const finalCardHTML = `
+      <div class="${finalCls}">
+        <div class="bdate">FINAL · Sun Jul 19 · MetLife</div>
+        ${teamRow(finA, finalResult ? (finalResult.winner === finA ? 'winner' : 'loser') : '')}
+        ${teamRow(finB, finalResult ? (finalResult.winner === finB ? 'winner' : 'loser') : '')}
+        ${finalResult ? `<div class="bresult">${finalResult.scoreA}-${finalResult.scoreB}${finalResult.note ? ' · ' + finalResult.note : ''}</div>` : ''}
+      </div>
+    `;
 
-    <div class="bracket-side right">
-      ${cardColumn('Semi-final', 'July 15', [rightSF])}
-      ${connectorColumn(1, 'rtl')}
-      ${cardColumn('Quarter-final', 'July 9 – 12', rightQF)}
-      ${connectorColumn(2, 'rtl')}
-      ${cardColumn('Round of 16', 'July 4 – 7', rightR16)}
-      ${connectorColumn(4, 'rtl')}
-      ${cardColumn('Round of 32', 'June 28 – July 3', rightR32)}
-    </div>
-  `;
+    const leftR32 = r32.slice(0, 8).map(r32Card);
+    const leftR16 = r16Cards.slice(0, 4);
+    const leftQF = qfCards.slice(0, 2);
+    const leftSF = sfCards[0];
 
-  // ===== STANDINGS TABLE =====
+    const rightR32 = r32.slice(8, 16).map(r32Card);
+    const rightR16 = r16Cards.slice(4, 8);
+    const rightQF = qfCards.slice(2, 4);
+    const rightSF = sfCards[1];
+
+    bracketEl.innerHTML = `
+      <div class="bracket-side left">
+        ${cardColumn('Round of 32', 'June 28 – July 3', leftR32)}
+        ${connectorColumn(4, 'ltr')}
+        ${cardColumn('Round of 16', 'July 4 – 7', leftR16)}
+        ${connectorColumn(2, 'ltr')}
+        ${cardColumn('Quarter-final', 'July 9 – 12', leftQF)}
+        ${connectorColumn(1, 'ltr')}
+        ${cardColumn('Semi-final', 'July 14', [leftSF])}
+      </div>
+      <div class="trophy-col">
+        ${trophySVG}
+        <div class="trophy-label">World Cup 2026</div>
+        <div class="trophy-sub">The Final · July 19</div>
+        ${finalCardHTML}
+      </div>
+      <div class="bracket-side right">
+        ${cardColumn('Semi-final', 'July 15', [rightSF])}
+        ${connectorColumn(1, 'rtl')}
+        ${cardColumn('Quarter-final', 'July 9 – 12', rightQF)}
+        ${connectorColumn(2, 'rtl')}
+        ${cardColumn('Round of 16', 'July 4 – 7', rightR16)}
+        ${connectorColumn(4, 'rtl')}
+        ${cardColumn('Round of 32', 'June 28 – July 3', rightR32)}
+      </div>
+    `;
+  }
+
+  // ===== STANDINGS =====
   function getStats(name) {
     const r = rosters[name];
-    const alive = r.filter(t => status[t].state !== "eliminated").length;
-    const dead = r.filter(t => status[t].state === "eliminated").length;
+    const alive = r.filter(t => status[t] && status[t].state !== "eliminated").length;
+    const dead = r.filter(t => status[t] && status[t].state === "eliminated").length;
     return { alive, dead };
   }
-  const standings = PORDER.map(name => ({ name, ...getStats(name) }));
-  standings.sort((a, b) => b.alive - a.alive || a.dead - b.dead);
 
-  const tbody = document.getElementById('standingsTableBody');
-  standings.forEach((s, i) => {
-    const rank = i + 1;
-    const tied = i > 0 && s.alive === standings[i-1].alive && s.dead === standings[i-1].dead;
-    const tr = document.createElement('tr');
-    tr.className = `rank-${rank}`;
-    tr.innerHTML = `
-      <td class="rank-cell">${tied ? '=' : rank}</td>
-      <td class="name-cell">
-        <span class="pdot" style="background: ${PCOLORS[s.name]}"></span>
-        ${s.name}
-      </td>
-      <td class="num alive-num">${s.alive}</td>
-      <td class="num dead-num">${s.dead}</td>
-      <td class="progress-cell">
-        <div class="progress-wrap">
+  const standingsBody = document.getElementById('standingsTableBody');
+  const participantsGrid = document.getElementById('participantsGrid');
+
+  function renderStandings() {
+    // Standings table
+    const standings = PORDER.map(name => ({ name, ...getStats(name) }));
+    standings.sort((a, b) => b.alive - a.alive || a.dead - b.dead);
+    standingsBody.innerHTML = '';
+    standings.forEach((s, i) => {
+      const rank = i + 1;
+      const tied = i > 0 && s.alive === standings[i-1].alive && s.dead === standings[i-1].dead;
+      const tr = document.createElement('tr');
+      tr.className = `rank-${rank}`;
+      tr.innerHTML = `
+        <td class="rank-cell">${tied ? '=' : rank}</td>
+        <td class="name-cell">
+          <span class="pdot" style="background: ${PCOLORS[s.name]}"></span>
+          ${s.name}
+        </td>
+        <td class="num alive-num">${s.alive}</td>
+        <td class="num dead-num">${s.dead}</td>
+        <td class="progress-cell">
           <div class="progress-track">
             <div class="progress-fill" style="width: ${(s.alive / 8) * 100}%"></div>
           </div>
-        </div>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
+        </td>
+      `;
+      standingsBody.appendChild(tr);
+    });
 
-  // ===== PARTICIPANT GRID =====
-  const grid = document.getElementById('participantsGrid');
-  PORDER.forEach((name, idx) => {
-    const roster = rosters[name];
-    const stats = getStats(name);
+    // Participant rosters
+    participantsGrid.innerHTML = '';
+    PORDER.forEach((name, idx) => {
+      const roster = rosters[name];
+      const stats = getStats(name);
+      const card = document.createElement('div');
+      card.className = 'pcard';
+      card.innerHTML = `
+        <div class="pcard-head">
+          <span class="order-num">№${idx + 1}</span>
+          <span class="pname">${name}</span>
+          <span class="pdot" style="background: ${PCOLORS[name]}"></span>
+        </div>
+        <div class="pcard-stats">
+          <div class="stat alive">
+            <span class="label">Alive</span>
+            <span class="val">${stats.alive}</span>
+          </div>
+          <div class="stat dead">
+            <span class="label">Out</span>
+            <span class="val">${stats.dead}</span>
+          </div>
+        </div>
+        <ul class="pcard-roster">
+          ${roster.map(team => {
+            const s = status[team] || { state: "alive", stage: "R32" };
+            let cls = '';
+            if (s.state === "eliminated") cls = "eliminated";
+            else if (s.state === "today")  cls = "alive playing-today";
+            else if (s.stage === "WON")    cls = "advanced";
+            else if (s.stage !== "R32")    cls = "advanced";
+            else                           cls = "alive";
+            return `
+              <li class="${cls}">
+                <span class="fg">${flags[team]}</span>
+                <span class="pn">${team}</span>
+                <span class="stage">${stageLabel(s)}</span>
+              </li>
+            `;
+          }).join('')}
+        </ul>
+      `;
+      participantsGrid.appendChild(card);
+    });
+  }
 
-    const card = document.createElement('div');
-    card.className = 'pcard';
-    card.innerHTML = `
-      <div class="pcard-head">
-        <span class="order-num">№${idx + 1}</span>
-        <span class="pname">${name}</span>
-        <span class="pdot" style="background: ${PCOLORS[name]}"></span>
-      </div>
-      <div class="pcard-stats">
-        <div class="stat alive">
-          <span class="label">Alive</span>
-          <span class="val">${stats.alive}</span>
-        </div>
-        <div class="stat dead">
-          <span class="label">Out</span>
-          <span class="val">${stats.dead}</span>
-        </div>
-      </div>
-      <ul class="pcard-roster">
-        ${roster.map(team => {
-          const s = status[team];
-          let cls = '';
-          if (s.state === "eliminated") cls = "eliminated";
-          else if (s.state === "today") cls = "alive playing-today";
-          else if (s.state === "advanced") cls = "advanced";
-          else cls = "alive";
-          return `
-            <li class="${cls}">
-              <span class="fg">${flags[team]}</span>
-              <span class="pn">${team}</span>
-              <span class="stage">${stageLabel(s)}</span>
-            </li>
-          `;
-        }).join('')}
-      </ul>
-    `;
-    grid.appendChild(card);
-  });
+  // Initial render of bracket and standings (today panel was already rendered above)
+  renderBracket();
+  renderStandings();
+
+  // Kick off the first live-score fetch now that everything is initialized.
+  // Subsequent polls run via the 60-second interval established earlier.
+  fetchLiveScores();
 </script>
 </body>
 </html>
