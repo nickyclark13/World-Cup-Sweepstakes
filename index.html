@@ -317,6 +317,29 @@
     color: var(--cream-dim);
     text-align: center;
   }
+  /* Auto-fetch status footer */
+  .fetch-footer {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(232,181,71,0.15);
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--cream-dim);
+    letter-spacing: 0.1em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .fetch-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .fetch-dot.pending { background: var(--cream-dim); animation: livePulse 1.4s ease-in-out infinite; }
+  .fetch-dot.ok { background: var(--alive); }
+  .fetch-dot.error { background: var(--dead); }
 
   /* =============== TAB 2: BRACKET =============== */
   .bracket-block {
@@ -902,96 +925,241 @@
     });
   });
 
-  // ===== TODAY'S MATCHUPS =====
+  // ===== TODAY'S MATCHUPS — auto-fetched live scores =====
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🔴 LIVE SCORE / FINAL SCORE CONFIG — UPDATE THIS SECTION DURING THE TOURNAMENT
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // For each match, set:
+  // 🟢 AUTOMATIC live scores via TheSportsDB free public API (no key required).
+  // The page fetches scores every 60 seconds while open. If the API is unreachable
+  // (network error, CORS, rate-limited), the page falls back to the MANUAL OVERRIDE
+  // values below — so the page never goes dark.
+  //
+  // To set a MANUAL override (e.g. if the API is wrong or stale), edit `manualScores`:
   //   status: "scheduled" | "live" | "final"
-  //   scoreA / scoreB: numbers (only used if "live" or "final")
-  //   minute: string for live e.g. "67'" or "HT" or "Full Time"
-  //
-  // To update: edit the values below, then re-commit/push to GitHub.
-  // The page will show the new values on next refresh — no other changes needed.
-  //
-  const liveScores = {
-    "Ivory Coast-Norway": { status: "live",      scoreA: 1, scoreB: 1, minute: "74'" },
-    "Mexico-Ecuador":     { status: "scheduled", scoreA: 0, scoreB: 0 },
-    "France-Sweden":      { status: "scheduled", scoreA: 0, scoreB: 0 }
+  //   scoreA / scoreB: numbers
+  //   minute: string for live e.g. "67'" or "HT"
+  // The manual value takes precedence ONLY for keys present here. To return to
+  // automatic mode for a match, delete its entry from manualScores below.
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const manualScores = {
+    // Example:
+    // "Ivory Coast-Norway": { status: "final", scoreA: 1, scoreB: 1, minute: "FT (4-3 pens)" },
   };
 
+  // The list of matches happening today. The teamA/teamB names MUST exactly match
+  // either our flag dictionary OR the TheSportsDB team names (we map both below).
   const todayMatches = [
     {
+      date: "2026-06-30",
       location: "AT&T Stadium · Arlington",
       teamA: "Ivory Coast", teamB: "Norway",
       note: "Group E runner-up vs Group I runner-up"
     },
     {
+      date: "2026-06-30",
       location: "Estadio Azteca · Mexico City",
       teamA: "Mexico", teamB: "Ecuador",
       note: "Group A winner vs Group E third-place"
     },
     {
+      date: "2026-06-30",
       location: "MetLife Stadium · East Rutherford",
       teamA: "France", teamB: "Sweden",
       note: "Group I winner vs Group F third-place"
     }
   ];
 
+  // Map TheSportsDB team-name variations → our canonical names
+  const tsdbNameMap = {
+    "United States": "United States",
+    "USA": "United States",
+    "Korea Republic": "South Korea",
+    "South Korea": "South Korea",
+    "Czech Republic": "Czechia",
+    "Czechia": "Czechia",
+    "Turkey": "Türkiye",
+    "Türkiye": "Türkiye",
+    "Cote d'Ivoire": "Ivory Coast",
+    "Côte d'Ivoire": "Ivory Coast",
+    "Ivory Coast": "Ivory Coast",
+    "Bosnia and Herzegovina": "Bosnia and Herzegovina",
+    "Bosnia & Herzegovina": "Bosnia and Herzegovina",
+    "DR Congo": "DR Congo",
+    "Congo DR": "DR Congo"
+  };
+  const normalizeTeamName = (n) => tsdbNameMap[n] || n;
+
+  // In-memory store: fetched scores from API; updated by fetchLiveScores()
+  let apiScores = {}; // { "Ivory Coast-Norway": { status, scoreA, scoreB, minute } }
+  let lastFetchTime = null;
+  let lastFetchStatus = "pending"; // "pending" | "ok" | "error"
+
+  // Resolve final score for one match: manual override > API > scheduled fallback
+  function resolveScore(teamA, teamB) {
+    const key = `${teamA}-${teamB}`;
+    if (manualScores[key]) return manualScores[key];
+    if (apiScores[key]) return apiScores[key];
+    return { status: "scheduled" };
+  }
+
+  // Render the today panel
   const todayEl = document.getElementById('todayMatchups');
-  todayMatches.forEach(m => {
-    const ownerA = ownerOf(m.teamA);
-    const ownerB = ownerOf(m.teamB);
-    const cA = ownerA ? PCOLORS[ownerA] : 'var(--cream-dim)';
-    const cB = ownerB ? PCOLORS[ownerB] : 'var(--cream-dim)';
+  function renderToday() {
+    todayEl.innerHTML = '';
+    todayMatches.forEach(m => {
+      const ownerA = ownerOf(m.teamA);
+      const ownerB = ownerOf(m.teamB);
+      const cA = ownerA ? PCOLORS[ownerA] : 'var(--cream-dim)';
+      const cB = ownerB ? PCOLORS[ownerB] : 'var(--cream-dim)';
 
-    const key = `${m.teamA}-${m.teamB}`;
-    const score = liveScores[key] || { status: "scheduled" };
+      const score = resolveScore(m.teamA, m.teamB);
 
-    let statusHTML = '';
-    let scoreHTML = '';
-    if (score.status === "live") {
-      statusHTML = `<div class="matchup-status live"><span class="live-dot"></span>LIVE${score.minute ? ' · ' + score.minute : ''}</div>`;
-      scoreHTML = `<div class="matchup-score">
-        <span class="score-num live-num">${score.scoreA}</span>
-        <span class="score-dash">–</span>
-        <span class="score-num live-num">${score.scoreB}</span>
-      </div>`;
-    } else if (score.status === "final") {
-      statusHTML = `<div class="matchup-status final">FULL TIME</div>`;
-      scoreHTML = `<div class="matchup-score">
-        <span class="score-num">${score.scoreA}</span>
-        <span class="score-dash">–</span>
-        <span class="score-num">${score.scoreB}</span>
-      </div>`;
-    } else {
-      statusHTML = `<div class="matchup-status scheduled">UPCOMING</div>`;
+      let statusHTML = '';
+      let scoreHTML = '';
+      if (score.status === "live") {
+        statusHTML = `<div class="matchup-status live"><span class="live-dot"></span>LIVE${score.minute ? ' · ' + score.minute : ''}</div>`;
+        scoreHTML = `<div class="matchup-score">
+          <span class="score-num live-num">${score.scoreA}</span>
+          <span class="score-dash">–</span>
+          <span class="score-num live-num">${score.scoreB}</span>
+        </div>`;
+      } else if (score.status === "final") {
+        statusHTML = `<div class="matchup-status final">FULL TIME${score.minute ? ' · ' + score.minute : ''}</div>`;
+        scoreHTML = `<div class="matchup-score">
+          <span class="score-num">${score.scoreA}</span>
+          <span class="score-dash">–</span>
+          <span class="score-num">${score.scoreB}</span>
+        </div>`;
+      } else {
+        statusHTML = `<div class="matchup-status scheduled">UPCOMING</div>`;
+      }
+
+      const div = document.createElement('div');
+      div.className = 'matchup' + (score.status === 'live' ? ' is-live' : '');
+      div.innerHTML = `
+        ${statusHTML}
+        <div class="matchup-teams">
+          <div class="matchup-team">
+            <div class="flag-lg">${flags[m.teamA]}</div>
+            <div class="tname">${m.teamA}</div>
+            <div class="owner" style="color: ${cA}">${ownerA || '—'}</div>
+          </div>
+          <div class="matchup-vs-block">
+            ${scoreHTML || '<div class="matchup-vs">vs</div>'}
+          </div>
+          <div class="matchup-team">
+            <div class="flag-lg">${flags[m.teamB]}</div>
+            <div class="tname">${m.teamB}</div>
+            <div class="owner" style="color: ${cB}">${ownerB || '—'}</div>
+          </div>
+        </div>
+        <div class="matchup-location">${m.location}</div>
+        <div class="matchup-note">${m.note}</div>
+      `;
+      todayEl.appendChild(div);
+    });
+    // Append source/freshness footer
+    const footer = document.createElement('div');
+    footer.className = 'fetch-footer';
+    const sourceLabel =
+      lastFetchStatus === 'ok'    ? `Live data · TheSportsDB · updated ${timeAgoText(lastFetchTime)}` :
+      lastFetchStatus === 'error' ? `Live feed unavailable · showing manual values · retry in 60s` :
+                                    `Fetching live scores…`;
+    footer.innerHTML = `<span class="fetch-dot ${lastFetchStatus}"></span>${sourceLabel}`;
+    todayEl.parentElement.appendChild(footer);
+    // remove any previous footers (keep only the latest)
+    const footers = todayEl.parentElement.querySelectorAll('.fetch-footer');
+    if (footers.length > 1) {
+      for (let i = 0; i < footers.length - 1; i++) footers[i].remove();
     }
+  }
 
-    const div = document.createElement('div');
-    div.className = 'matchup' + (score.status === 'live' ? ' is-live' : '');
-    div.innerHTML = `
-      ${statusHTML}
-      <div class="matchup-teams">
-        <div class="matchup-team">
-          <div class="flag-lg">${flags[m.teamA]}</div>
-          <div class="tname">${m.teamA}</div>
-          <div class="owner" style="color: ${cA}">${ownerA || '—'}</div>
-        </div>
-        <div class="matchup-vs-block">
-          ${scoreHTML || '<div class="matchup-vs">vs</div>'}
-        </div>
-        <div class="matchup-team">
-          <div class="flag-lg">${flags[m.teamB]}</div>
-          <div class="tname">${m.teamB}</div>
-          <div class="owner" style="color: ${cB}">${ownerB || '—'}</div>
-        </div>
-      </div>
-      <div class="matchup-location">${m.location}</div>
-      <div class="matchup-note">${m.note}</div>
-    `;
-    todayEl.appendChild(div);
-  });
+  function timeAgoText(ts) {
+    if (!ts) return 'just now';
+    const diff = Math.floor((Date.now() - ts) / 1000);
+    if (diff < 10) return 'just now';
+    if (diff < 60) return diff + 's ago';
+    const mins = Math.floor(diff / 60);
+    if (mins < 60) return mins + ' min ago';
+    return Math.floor(mins / 60) + ' hr ago';
+  }
+
+  // Determine status from TheSportsDB event.strStatus
+  // Known values include: "Match Finished", "Not Started", "First Half", "Halftime",
+  // "Second Half", "Extra Time", "Penalty Shootout", "Match Postponed", etc.
+  // Also live games often have strStatus = a minute number like "67'" or just a status string.
+  function parseTsdbEvent(ev) {
+    const status = (ev.strStatus || '').toLowerCase();
+    const homeScore = ev.intHomeScore !== null ? parseInt(ev.intHomeScore, 10) : null;
+    const awayScore = ev.intAwayScore !== null ? parseInt(ev.intAwayScore, 10) : null;
+    let parsedStatus = "scheduled";
+    let minute = undefined;
+
+    if (status.includes('finished') || status === 'ft' || status.includes('full time')
+        || status.includes('after penalties') || status.includes('aet')) {
+      parsedStatus = "final";
+    } else if (status === 'not started' || status === 'ns' || status === '' || status === 'scheduled') {
+      parsedStatus = (homeScore !== null && awayScore !== null && (homeScore > 0 || awayScore > 0))
+        ? "live" : "scheduled";
+    } else {
+      // anything else (first half, halftime, second half, minute number, etc.)
+      parsedStatus = "live";
+      if (status === 'halftime' || status === 'ht') minute = 'HT';
+      else if (status === 'first half' || status === '1h') minute = '1H';
+      else if (status === 'second half' || status === '2h') minute = '2H';
+      else if (status === 'extra time' || status === 'et')   minute = 'ET';
+      else if (status === 'penalty shootout' || status === 'pen') minute = 'Pens';
+      else if (/^\d+'?$/.test(status)) minute = status.includes("'") ? status : status + "'";
+      else if (status) minute = ev.strStatus; // raw fallback
+    }
+    return { status: parsedStatus, scoreA: homeScore, scoreB: awayScore, minute };
+  }
+
+  async function fetchLiveScores() {
+    // We fetch matches for each unique date in todayMatches and merge.
+    const dates = Array.from(new Set(todayMatches.map(m => m.date)));
+    const newApiScores = {};
+    try {
+      for (const d of dates) {
+        const url = `https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=${d}&l=4429`;
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+        const events = json.events || [];
+        events.forEach(ev => {
+          const home = normalizeTeamName(ev.strHomeTeam);
+          const away = normalizeTeamName(ev.strAwayTeam);
+          // Match against our todayMatches in either home/away order
+          for (const m of todayMatches) {
+            if (m.date !== d) continue;
+            const matches =
+              (home === m.teamA && away === m.teamB) ||
+              (home === m.teamB && away === m.teamA);
+            if (matches) {
+              const parsed = parseTsdbEvent(ev);
+              // If the TSDB returned the order flipped, swap scores so they map to teamA/teamB
+              if (home === m.teamB && away === m.teamA) {
+                const tmp = parsed.scoreA;
+                parsed.scoreA = parsed.scoreB;
+                parsed.scoreB = tmp;
+              }
+              newApiScores[`${m.teamA}-${m.teamB}`] = parsed;
+            }
+          }
+        });
+      }
+      apiScores = newApiScores;
+      lastFetchStatus = 'ok';
+      lastFetchTime = Date.now();
+    } catch (e) {
+      lastFetchStatus = 'error';
+      // keep last successful apiScores (don't wipe) — still better than nothing
+    }
+    renderToday();
+  }
+
+  // Initial render + first fetch + 60s polling
+  renderToday();
+  fetchLiveScores();
+  setInterval(fetchLiveScores, 60 * 1000);
 
   // ===== BRACKET =====
   // Bracket structure based on FIFA bracket: 16 R32 matches → 8 R16 → 4 QF → 2 SF → Final
@@ -1349,7 +1517,6 @@
           <div class="progress-track">
             <div class="progress-fill" style="width: ${(s.alive / 8) * 100}%"></div>
           </div>
-          <span class="progress-text">${s.alive}/8</span>
         </div>
       </td>
     `;
