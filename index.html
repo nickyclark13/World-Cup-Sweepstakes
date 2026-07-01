@@ -378,15 +378,14 @@
     gap: 0;
   }
   .bracket-side.left {
-    grid-template-columns: 1.05fr 0.45fr 1fr 0.45fr 1fr 0.45fr 1fr;
+    grid-template-columns: 1.05fr 0.4fr 1fr 0.4fr 1fr 0.4fr 1fr;
   }
   .bracket-side.right {
-    grid-template-columns: 1fr 0.45fr 1fr 0.45fr 1fr 0.45fr 1.05fr;
+    grid-template-columns: 1fr 0.4fr 1fr 0.4fr 1fr 0.4fr 1.05fr;
   }
   .round-col {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-around;
+    display: grid;
+    grid-template-rows: auto 1fr; /* header + body */
     padding: 0 6px;
     position: relative;
   }
@@ -400,6 +399,8 @@
     padding: 6px 0 10px;
     border-bottom: 1px solid rgba(232,181,71,0.25);
     margin-bottom: 12px;
+    min-height: 48px;
+    box-sizing: border-box;
   }
   .round-header .sub {
     display: block;
@@ -408,11 +409,53 @@
     margin-top: 2px;
     letter-spacing: 0.1em;
   }
+  /* Round body: N equal rows, each holding one card centered vertically.
+     This is what makes cards align to specific fractional heights so
+     connector lines can meet them exactly. */
+  .round-body {
+    display: grid;
+    height: 100%;
+  }
+  .round-body.rows-8 { grid-template-rows: repeat(8, 1fr); }
+  .round-body.rows-4 { grid-template-rows: repeat(4, 1fr); }
+  .round-body.rows-2 { grid-template-rows: repeat(2, 1fr); }
+  .round-body.rows-1 { grid-template-rows: 1fr; }
+  .round-body .cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0;
+  }
+  .round-body .cell .bmatch {
+    width: 100%;
+    margin: 0;
+  }
+
   .round-col.connectors {
     padding: 0;
+    grid-template-rows: auto 1fr;
   }
   .round-col.connectors .round-header {
     visibility: hidden;
+  }
+  .connectors-body {
+    display: grid;
+    height: 100%;
+  }
+  .connectors-body.pairs-4 { grid-template-rows: repeat(4, 1fr); }
+  .connectors-body.pairs-2 { grid-template-rows: repeat(2, 1fr); }
+  .connectors-body.pairs-1 { grid-template-rows: 1fr; }
+  .connector-pair {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  .connector-pair svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
   }
 
   /* Match card */
@@ -425,7 +468,7 @@
     flex-direction: column;
     gap: 4px;
     font-size: 11px;
-    margin: 6px 0;
+    box-sizing: border-box;
   }
   .bmatch.played { background: rgba(178,85,85,0.06); border-color: rgba(178,85,85,0.3); }
   .bmatch.today  { background: rgba(232,181,71,0.14); border-color: var(--gold); box-shadow: 0 0 14px rgba(232,181,71,0.18); }
@@ -485,20 +528,6 @@
     color: var(--cream-dim);
     text-align: right;
     margin-top: 2px;
-  }
-
-  /* Connector lines — drawn in dedicated connector columns */
-  .connector-pair {
-    flex: 1;
-    display: flex;
-    position: relative;
-    min-height: 0;
-  }
-  /* The connector pair holds two halves: top half and bottom half */
-  .connector-pair svg {
-    width: 100%;
-    height: 100%;
-    overflow: visible;
   }
 
   /* Trophy column in the center */
@@ -910,7 +939,7 @@
   // Hardcoded initial results (these are the matches that completed before this
   // file was deployed — the API may also re-confirm them, which is fine).
   recordResult("South Africa", "Canada",      "Canada",   0, 1, "R32");
-  recordResult("Netherlands",  "Morocco",     "Morocco",  1, 1, "R32", "3-2 pens");
+  recordResult("Netherlands",  "Morocco",     "Morocco",  1, 1, "R32", "2-3 pens");
   recordResult("Germany",      "Paraguay",    "Paraguay", 1, 1, "R32", "3-4 pens");
   recordResult("Brazil",       "Japan",       "Brazil",   2, 1, "R32");
 
@@ -1418,10 +1447,91 @@
     return "R32";
   }
 
+  // Check if a team-pair is a valid knockout fixture (either R32 as scheduled,
+  // or R16+ where both teams have advanced to that round based on prior results).
+  // This prevents stray API results (friendlies, group stage, other leagues)
+  // from incorrectly advancing/eliminating teams in our bracket.
+  function isValidBracketPair(teamA, teamB) {
+    // R32 fixtures: 16 exact pairings
+    for (const m of r32) {
+      if ((m.a === teamA && m.b === teamB) || (m.a === teamB && m.b === teamA)) {
+        return { round: "R32" };
+      }
+    }
+    // R16: derive team slots from current R32 results
+    const r32Winners = r32.map(m => {
+      const r = getResult(m.a, m.b);
+      return r ? r.winner : null;
+    });
+    for (let i = 0; i < r16Pairs.length; i++) {
+      const [iA, iB] = r16Pairs[i];
+      const wA = r32Winners[iA], wB = r32Winners[iB];
+      if (!wA || !wB) continue;
+      if ((wA === teamA && wB === teamB) || (wA === teamB && wB === teamA)) {
+        return { round: "R16" };
+      }
+    }
+    // QF: derive from R16 winners
+    const r16Winners = r16Pairs.map(([iA, iB]) => {
+      const wA = r32Winners[iA], wB = r32Winners[iB];
+      if (!wA || !wB) return null;
+      const r = getResult(wA, wB);
+      return r ? r.winner : null;
+    });
+    for (let i = 0; i < qfPairs.length; i++) {
+      const [iA, iB] = qfPairs[i];
+      const wA = r16Winners[iA], wB = r16Winners[iB];
+      if (!wA || !wB) continue;
+      if ((wA === teamA && wB === teamB) || (wA === teamB && wB === teamA)) {
+        return { round: "QF" };
+      }
+    }
+    // SF: derive from QF winners
+    const qfWinners = qfPairs.map(([iA, iB]) => {
+      const wA = r16Winners[iA], wB = r16Winners[iB];
+      if (!wA || !wB) return null;
+      const r = getResult(wA, wB);
+      return r ? r.winner : null;
+    });
+    for (let i = 0; i < sfPairs.length; i++) {
+      const [iA, iB] = sfPairs[i];
+      const wA = qfWinners[iA], wB = qfWinners[iB];
+      if (!wA || !wB) continue;
+      if ((wA === teamA && wB === teamB) || (wA === teamB && wB === teamA)) {
+        return { round: "SF" };
+      }
+    }
+    // Final: two SF winners
+    const sfWinners = sfPairs.map(([iA, iB]) => {
+      const wA = qfWinners[iA], wB = qfWinners[iB];
+      if (!wA || !wB) return null;
+      const r = getResult(wA, wB);
+      return r ? r.winner : null;
+    });
+    if (sfWinners[0] && sfWinners[1]) {
+      const [f1, f2] = sfWinners;
+      if ((f1 === teamA && f2 === teamB) || (f1 === teamB && f2 === teamA)) {
+        return { round: "F" };
+      }
+    }
+    return null;
+  }
+
   // Merge a finished match into matchResults (auto-advances bracket on next render)
   function recordFinishedEvent(ev) {
     const home = normalizeTeamName(ev.strHomeTeam);
     const away = normalizeTeamName(ev.strAwayTeam);
+    // Defensive filter: only accept results that correspond to a valid
+    // knockout-bracket fixture. This prevents friendlies, group-stage
+    // matches, or stray-league results from corrupting the bracket.
+    const bracketFixture = isValidBracketPair(home, away);
+    if (!bracketFixture) return;
+    // Extra safety: only accept a result if the match date matches the
+    // expected round's window (guards against very old data).
+    const expectedRound = bracketFixture.round;
+    const actualRound = roundForDate(ev.dateEvent);
+    if (expectedRound !== actualRound) return;
+
     const safeInt = v => {
       if (v === null || v === undefined || v === '' || v === 'null') return null;
       const n = parseInt(v, 10);
@@ -1443,10 +1553,9 @@
       }
       if (!winner) return;
     }
-    const round = roundForDate(ev.dateEvent);
     const note = (ev.strStatus || '').toLowerCase().includes('pen') ? 'pens' :
                  (ev.strStatus || '').toLowerCase().includes('aet') ? 'AET' : undefined;
-    recordResult(home, away, winner, homeScore, awayScore, round, note);
+    recordResult(home, away, winner, homeScore, awayScore, expectedRound, note);
   }
 
   // Apply manual overrides into matchResults (these win against the API)
@@ -1646,7 +1755,12 @@
     const bRole = result ? (result.winner === m.b ? 'winner' : 'loser') : '';
     let resultText = '';
     if (result) {
-      resultText = `${result.scoreA}-${result.scoreB}${result.note ? ' · ' + result.note : ''}`;
+      // Normalize score order: result.teamA/scoreA may be in a different
+      // team order than the display card (m.a/m.b). Reorient to match.
+      const [dispA, dispB] = result.teamA === m.a
+        ? [result.scoreA, result.scoreB]
+        : [result.scoreB, result.scoreA];
+      resultText = `${dispA}-${dispB}${result.note ? ' · ' + result.note : ''}`;
     }
     return `
       <div class="${cls}">
@@ -1668,7 +1782,10 @@
     const bRole = result ? (result.winner === teamB ? 'winner' : 'loser') : '';
     let resultText = '';
     if (result) {
-      resultText = `${result.scoreA}-${result.scoreB}${result.note ? ' · ' + result.note : ''}`;
+      const [dispA, dispB] = result.teamA === teamA
+        ? [result.scoreA, result.scoreB]
+        : [result.scoreB, result.scoreA];
+      resultText = `${dispA}-${dispB}${result.note ? ' · ' + result.note : ''}`;
     }
     return `
       <div class="${cls}">
@@ -1742,19 +1859,24 @@
   }
 
   function connectorColumn(numPairs, direction) {
-    let html = `<div class="round-col connectors"><div class="round-header">·</div>`;
-    for (let i = 0; i < numPairs; i++) {
-      html += `<div class="connector-pair">${connectorSVG(direction)}</div>`;
-    }
-    html += `</div>`;
-    return html;
+    return `
+      <div class="round-col connectors">
+        <div class="round-header">·</div>
+        <div class="connectors-body pairs-${numPairs}">
+          ${Array.from({length: numPairs}, () => `<div class="connector-pair">${connectorSVG(direction)}</div>`).join('')}
+        </div>
+      </div>
+    `;
   }
 
   function cardColumn(headerTitle, headerSub, cards) {
+    const n = cards.length;
     return `
       <div class="round-col">
         <div class="round-header">${headerTitle}<span class="sub">${headerSub}</span></div>
-        ${cards.join('')}
+        <div class="round-body rows-${n}">
+          ${cards.map(c => `<div class="cell">${c}</div>`).join('')}
+        </div>
       </div>
     `;
   }
