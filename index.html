@@ -936,12 +936,33 @@
   const qfPairs = [ [0, 1], [2, 3], [4, 5], [6, 7] ];
   const sfPairs = [ [0, 1], [2, 3] ];
 
-  // Hardcoded initial results (these are the matches that completed before this
-  // file was deployed — the API may also re-confirm them, which is fine).
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 🏁 MATCH RESULTS SEED — Add each finished match here
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Signature: recordResult(teamA, teamB, winner, scoreA, scoreB, round, note?)
+  //   - teamA/teamB: any order, use exact spellings from the flag list
+  //   - winner: must equal either teamA or teamB
+  //   - scoreA/scoreB: 90-minute (or AET) final score in the order teamA-teamB
+  //   - round: "R32", "R16", "QF", "SF", or "F"
+  //   - note (optional): e.g. "2-3 pens" or "AET"
+  //
+  // The API will TRY to auto-populate results, but if it lags or the free-tier
+  // data isn't available for this tournament, just append new results below and
+  // re-deploy. Every finished match added here immediately advances the bracket.
+  //
+  // Confirmed Round of 32 results so far:
   recordResult("South Africa", "Canada",      "Canada",   0, 1, "R32");
-  recordResult("Netherlands",  "Morocco",     "Morocco",  1, 1, "R32", "2-3 pens");
-  recordResult("Germany",      "Paraguay",    "Paraguay", 1, 1, "R32", "3-4 pens");
   recordResult("Brazil",       "Japan",       "Brazil",   2, 1, "R32");
+  recordResult("Germany",      "Paraguay",    "Paraguay", 1, 1, "R32", "3-4 pens");
+  recordResult("Netherlands",  "Morocco",     "Morocco",  1, 1, "R32", "2-3 pens");
+  recordResult("Ivory Coast",  "Norway",      "Norway",   1, 2, "R32");
+  recordResult("France",       "Sweden",      "France",   3, 0, "R32");
+  recordResult("Mexico",       "Ecuador",     "Mexico",   2, 0, "R32");
+  recordResult("England",      "DR Congo",    "England",  2, 1, "R32");
+  // ← Add new results here as matches finish:
+  // recordResult("Belgium", "Senegal", "Belgium", 2, 1, "R32");
+  // recordResult("United States", "Bosnia and Herzegovina", "United States", 1, 0, "R32");
+  // ...etc
 
   // Status is now DERIVED, not stored. It's recomputed every render.
   let status = {};
